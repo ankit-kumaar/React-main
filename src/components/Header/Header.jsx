@@ -4,7 +4,8 @@ const reactDescriptions = ['Fundamental', 'Crucial', 'Core'];
 
 function genRandomInt(max){
   return Math.floor(Math.random() * (max + 1));
-  //console
+  //console fedc
+  //yestrdjf
 }
 
 export default function Header() {
