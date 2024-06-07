@@ -11,11 +11,12 @@ function App() {
   const [ selectedTopic, setSelectedTopic ] = useState();
 
   function handleSelect(selectedButton){
-    // selectedButton => 'components', 'jsx', 'props', 'state'
+  // selectedButton => 'components', 'jsx', 'props', 'state'
     setSelectedTopic(selectedButton);
     console.log(selectedTopic);
   }
 
+  
   return (
     <div>
       <Header />
