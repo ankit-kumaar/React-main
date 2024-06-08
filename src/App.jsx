@@ -3,7 +3,7 @@ import Header from './components/Header/Header.jsx';
 //import componentsImg from './assets/components.png'
 import { CORE_CONCEPTS } from './data.js';
 import CoreConcept from './components/CoreConcept.jsx';
-//for named import {}is required whereas for default it is not required.
+//for named import {}is required whereas for default it is not required.jyjf
 import TabButton from './components/TabButton.jsx';
 import { EXAMPLES } from './data.js';
 
