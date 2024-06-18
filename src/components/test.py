@@ -1,145 +1,100 @@
-from pyVmomi import vim
-from pyVim.connect import SmartConnect, Disconnect
-import atexit
-#29, 30, 31
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from datetime import datetime
+from tkinter import Tk, Label, Entry, StringVar, OptionMenu, Button
 
+# Function to generate receipt
+def generate_receipt(data):
+    try:
+        # Create a PDF file
+        pdf_file = SimpleDocTemplate("receipt.pdf", pagesize=A4)
 
-def connect_to_esxi(host_details):
-    """
-    Establish a connection to the ESXi host.
+        # Create a list to store the elements of the PDF
+        elements = []
 
-    :param host_details: A dictionary containing ESXi host details.
-                         It should have the following keys:
-                         - 'ip_address': IP address of the ESXi host
-                         - 'username': Username for authentication
-                         - 'password': Password for authentication
-    :return: A connection object to the ESXi host
-    """
-    si = SmartConnect(
-        host=host_details['ip_address'],
-        user=host_details['username'],
-        pwd=host_details['password'],
-        disableSslCertValidation=True
-    )
-    atexit.register(Disconnect, si)
-    return si
+        # Create the title
+        title_style = ParagraphStyle(name='Title', fontSize=24, alignment=TA_CENTER)
+        title = Paragraph("Transaction Receipt", title_style)
+        elements.append(title)
+        elements.append(Spacer(1, 10 * mm))
 
-def create_vm(vm_spec, content, datacenter, cluster):
-    """
-    Create a virtual machine in the vCenter.
+        # Create the date
+        date_style = ParagraphStyle(name='Date', fontSize=12)
+        date = Paragraph("Date: " + datetime.now().strftime("%d-%m-%Y"), date_style)
+        elements.append(date)
+        elements.append(Spacer(1, 5 * mm))
 
-    :param vm_spec: A dictionary containing VM specifications.
-                    It should have the following keys:
-                    - 'vm_name': Name of the virtual machine
-                    - 'cpu_count': Number of CPU cores
-                    - 'memory_size_gb': Memory size in GB
-                    - 'disk_size_gb': Disk size in GB
-                    - 'network_config': A dictionary containing network configurations
-    :param content: A connection object to the ESXi host
-    :param datacenter: A datacenter object
-    :param cluster: A cluster object
-    :return: A virtual machine object
-    """
-    # Create a new VM configuration
-    vm_conf = vim.vm.ConfigInfo()
-    vm_conf.name = vm_spec['vm_name']
-    vm_conf.numCPUs = vm_spec['cpu_count']
-    vm_conf.memoryMB = vm_spec['memory_size_gb'] * 1024
+        # Create the transaction details table
+        details_style = TableStyle([
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 12),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('PADDING', (0, 0), (-1, -1), 3 * mm)
+        ])
+        details = Table(data, style=details_style)
+        elements.append(details)
+        elements.append(Spacer(1, 10 * mm))
 
-    # Create a new disk configuration
-    disk_conf = vim.vm.device.VirtualDeviceSpec()
-    disk_conf.device = vim.vm.device.VirtualDisk()
-    disk_conf.device.capacityInKB = vm_spec['disk_size_gb'] * 1024 * 1024
+        # Create the footer
+        footer_style = ParagraphStyle(name='Footer', fontSize=12, alignment=TA_CENTER)
+        footer = Paragraph("Thank you for your transaction!", footer_style)
+        elements.append(footer)
 
-    # Create a new network configuration
-    network_conf = vim.vm.device.VirtualDeviceSpec()
-    network_conf.device = vim.vm.device.VirtualVmxnet3()
-    network_conf.device.deviceInfo = vim.Description()
-    network_conf.device.deviceInfo.label = 'Network Interface 1'
-    network_conf.device.deviceInfo.summary = 'Network Interface 1'
-    network_conf.device.connectable = vim.vm.device.VirtualDevice.ConnectInfo()
-    network_conf.device.connectable.startConnected = True
-    network_conf.device.connectable.allowGuestControl = True
+        # Build the PDF
+        pdf_file.build(elements)
 
-    # Get the network object
-    network = next((network for network in content.viewManager.CreateContainerView(
-        content.rootFolder, [vim.Network], True).view
-                    if network.name == vm_spec['network_config']['network_name']), None)
-    if network:
-        network_conf.device.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo()
-        network_conf.device.backing.network = network
-        network_conf.device.backing.useAutoDetect = False
+        return "receipt.pdf"
 
-    # Add devices to the VM configuration
-    vm_conf.deviceChange = [disk_conf, network_conf]
+    except Exception as e:
+        return str(e)
 
-    # Create the VM
-    folder = datacenter.vmFolder
-    task = folder.CreateVM_Task(config=vm_conf, pool=cluster)
-    task.Wait()
-    return task.info.result
+# Function to get form data
+def get_form_data():
+    def submit_fields():
+        amount = amount_entry.get()
+        quantity = quantity_entry.get()
+        mode_of_payment = mode_of_payment_var.get()
+        payment_details = payment_details_entry.get()
 
-def deploy_vm_vcenter(esxi_host_details, vm_specs):
-    """
-    Deploy multiple virtual machines within a VMware vCenter environment.
+        data = [
+            ["Description", "Amount"],
+            ["Quantity", quantity],
+            ["Mode of Payment", mode_of_payment],
+            ["Payment Details", payment_details],
+            ["Total Amount", amount]
+        ]
 
-    :param esxi_host_details: A dictionary containing ESXi host details.
-                              It should have the following keys:
-                              - 'ip_address': IP address of the ESXi host
-                              - 'username': Username for authentication
-                              - 'password': Password for authentication
-    :param vm_specs: A list of dictionaries containing VM specifications.
-                     Each dictionary should have the following keys:
-                     - 'vm_name': Name of the virtual machine
-                     - 'cpu_count': Number of CPU cores
-                     - 'memory_size_gb': Memory size in GB
-                     - 'disk_size_gb': Disk size in GB
-                     - 'network_config': A dictionary containing network configurations
-    :return: A list of virtual machine objects
-    """
-    si = connect_to_esxi(esxi_host_details)
-    content = si.RetrieveContent()
-    datacenter = content.rootFolder.childEntity[0]
-    cluster = datacenter.hostFolder.childEntity[0]
+        root.destroy()
+        generate_receipt(data)
 
-    vm_list = []
-    for vm_spec in vm_specs:
-        vm = create_vm(vm_spec, content, datacenter, cluster)
-        vm_list.append(vm)
+    root = Tk()
+    root.title("Transaction Receipt Form")
 
-    return vm_list
+    Label(root, text="Amount").grid(row=0, column=0)
+    amount_entry = Entry(root)
+    amount_entry.grid(row=0, column=1)
 
-# Example usage
-if __name__ == "__main__":
-    esxi_host_details = {
-        'ip_address': '192.168.1.100',
-        'username': 'your_username',
-        'password': 'your_password'
-    }
-    vm_specs = [
-        {
-            'vm_name': 'VM1',
-            'cpu_count': 2,
-            'memory_size_gb': 4,
-            'disk_size_gb': 100,
-            'network_config': {
-                'network_name': 'VM Network',
-                'ip_address': '192.168.1.10'
-            }
-        },
-        {
-            'vm_name': 'VM2',
-            'cpu_count': 4,
-            'memory_size_gb': 8,
-            'disk_size_gb': 200,
-            'network_config': {
-                'network_name': 'VM Network',
-                'ip_address': '192.168.1.11'
-            }
-        }
-    ]
+    Label(root, text="Quantity").grid(row=1, column=0)
+    quantity_entry = Entry(root)
+    quantity_entry.grid(row=1, column=1)
 
-    deployed_vms = deploy_vm_vcenter(esxi_host_details, vm_specs)
-    print("Deployed VMs:")
-    for vm in deployed_vms:
-        print(vm.name)
+    mode_of_payment_var = StringVar(root)
+    mode_of_payment_var.set("Cash")
+    Label(root, text="Mode of Payment").grid(row=2, column=0)
+    mode_of_payment_menu = OptionMenu(root, mode_of_payment_var, "Cash", "Card", "Online")
+    mode_of_payment_menu.grid(row=2, column=1)
+
+    Label(root, text="Payment Details").grid(row=3, column=0)
+    payment_details_entry = Entry(root)
+    payment_details_entry.grid(row=3, column=1)
+
+    Button(root, text="Submit", command=submit_fields).grid(row=4, column=1)
+
+    root.mainloop()
+
+get_form_data()
