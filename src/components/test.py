@@ -1,100 +1,135 @@
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
-from datetime import datetime
-from tkinter import Tk, Label, Entry, StringVar, OptionMenu, Button
+import imaplib
+import email
+from email.header import decode_header
+import os
+import logging
 
-# Function to generate receipt
-def generate_receipt(data):
-    try:
-        # Create a PDF file
-        pdf_file = SimpleDocTemplate("receipt.pdf", pagesize=A4)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-        # Create a list to store the elements of the PDF
-        elements = []
+class GmailClient:
+    def __init__(self, username, password, imap_server='imap.gmail.com'):
+        self.username = username
+        self.password = password
+        self.imap_server = imap_server
+        self.mail = None
 
-        # Create the title
-        title_style = ParagraphStyle(name='Title', fontSize=24, alignment=TA_CENTER)
-        title = Paragraph("Transaction Receipt", title_style)
-        elements.append(title)
-        elements.append(Spacer(1, 10 * mm))
+    def connect_to_gmail(self):
+        try:
+            self.mail = imaplib.IMAP4_SSL(self.imap_server)
+            self.mail.login(self.username, self.password)
+            logger.info('Connected to Gmail')
+        except imaplib.IMAP4.error as e:
+            logger.error(f'Login failed: {e}')
+            raise Exception('Login failed')
 
-        # Create the date
-        date_style = ParagraphStyle(name='Date', fontSize=12)
-        date = Paragraph("Date: " + datetime.now().strftime("%d-%m-%Y"), date_style)
-        elements.append(date)
-        elements.append(Spacer(1, 5 * mm))
+    def get_email_body(self, email_id):
+        try:
+            _, msg = self.mail.fetch(email_id, '(RFC822)')
+            raw_message = msg[0][1]
+            message = email.message_from_bytes(raw_message)
+            for part in message.walk():
+                if part.get_content_type() == 'text/plain':
+                    body = part.get_payload(decode=True).decode('utf-8')
+                    return body
+        except Exception as e:
+            logger.error(f'Failed to retrieve email body: {e}')
+            raise Exception('Failed to retrieve email body')
 
-        # Create the transaction details table
-        details_style = TableStyle([
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 12),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 3 * mm)
-        ])
-        details = Table(data, style=details_style)
-        elements.append(details)
-        elements.append(Spacer(1, 10 * mm))
+    def get_all_emails_from_user(self, sender):
+        try:
+            self.mail.select('inbox')
+            _, search_data = self.mail.search(None, f'FROM "{sender}"')
+            email_ids = search_data[0].split()
+            return email_ids
+        except Exception as e:
+            logger.error(f'Failed to retrieve emails from {sender}: {e}')
+            raise Exception('Failed to retrieve emails')
 
-        # Create the footer
-        footer_style = ParagraphStyle(name='Footer', fontSize=12, alignment=TA_CENTER)
-        footer = Paragraph("Thank you for your transaction!", footer_style)
-        elements.append(footer)
+    def get_all_emails_under_label(self, label):
+        try:
+            self.mail.select(label)
+            _, search_data = self.mail.search(None, 'ALL')
+            email_ids = search_data[0].split()
+            return email_ids
+        except Exception as e:
+            logger.error(f'Failed to retrieve emails under {label}: {e}')
+            raise Exception('Failed to retrieve emails')
 
-        # Build the PDF
-        pdf_file.build(elements)
+    def fetch_unread_emails(self):
+        try:
+            self.mail.select('inbox')
+            _, search_data = self.mail.search(None, 'UNSEEN')
+            email_ids = search_data[0].split()
+            return email_ids
+        except Exception as e:
+            logger.error(f'Failed to retrieve unread emails: {e}')
+            raise Exception('Failed to retrieve unread emails')
 
-        return "receipt.pdf"
+    def mark_email_as_read(self, email_id):
+        try:
+            self.mail.store(email_id, '+FLAGS', '\Seen')
+            logger.info(f'Marked email {email_id} as read')
+        except Exception as e:
+            logger.error(f'Failed to mark email {email_id} as read: {e}')
+            raise Exception('Failed to mark email as read')
 
-    except Exception as e:
-        return str(e)
+    def delete_email(self, email_id):
+        try:
+            self.mail.store(email_id, '+FLAGS', '\Deleted')
+            self.mail.expunge()
+            logger.info(f'Deleted email {email_id}')
+        except Exception as e:
+            logger.error(f'Failed to delete email {email_id}: {e}')
+            raise Exception('Failed to delete email')
 
-# Function to get form data
-def get_form_data():
-    def submit_fields():
-        amount = amount_entry.get()
-        quantity = quantity_entry.get()
-        mode_of_payment = mode_of_payment_var.get()
-        payment_details = payment_details_entry.get()
+    def save_email_attachments(self, email_id, download_folder):
+        try:
+            _, msg = self.mail.fetch(email_id, '(RFC822)')
+            raw_message = msg[0][1]
+            message = email.message_from_bytes(raw_message)
+            for part in message.walk():
+                if part.get_content_maintype() == 'multipart':
+                    continue
+                if part.get('Content-Disposition') is None:
+                    continue
+                filename = part.get_filename()
+                if filename:
+                    with open(os.path.join(download_folder, filename), 'wb') as f:
+                        f.write(part.get_payload(decode=True))
+                    logger.info(f'Saved attachment {filename} to {download_folder}')
+        except Exception as e:
+            logger.error(f'Failed to save attachments for email {email_id}: {e}')
+            raise Exception('Failed to save attachments')
 
-        data = [
-            ["Description", "Amount"],
-            ["Quantity", quantity],
-            ["Mode of Payment", mode_of_payment],
-            ["Payment Details", payment_details],
-            ["Total Amount", amount]
-        ]
+# Example usage
+if __name__ == '__main__':
+    username = 'your_email@gmail.com'
+    password = 'your_password'
+    client = GmailClient(username, password)
+    client.connect_to_gmail()
 
-        root.destroy()
-        generate_receipt(data)
+    # Get email body
+    email_id = client.fetch_unread_emails()[0]
+    print(client.get_email_body(email_id))
 
-    root = Tk()
-    root.title("Transaction Receipt Form")
+    # Get all emails from a user
+    sender = 'sender@example.com'
+    email_ids = client.get_all_emails_from_user(sender)
+    print(email_ids)
 
-    Label(root, text="Amount").grid(row=0, column=0)
-    amount_entry = Entry(root)
-    amount_entry.grid(row=0, column=1)
+    # Get all emails under a label
+    label = 'label_name'
+    email_ids = client.get_all_emails_under_label(label)
+    print(email_ids)
 
-    Label(root, text="Quantity").grid(row=1, column=0)
-    quantity_entry = Entry(root)
-    quantity_entry.grid(row=1, column=1)
+    # Mark an email as read
+    client.mark_email_as_read(email_id)
 
-    mode_of_payment_var = StringVar(root)
-    mode_of_payment_var.set("Cash")
-    Label(root, text="Mode of Payment").grid(row=2, column=0)
-    mode_of_payment_menu = OptionMenu(root, mode_of_payment_var, "Cash", "Card", "Online")
-    mode_of_payment_menu.grid(row=2, column=1)
+    # Delete an email
+    client.delete_email(email_id)
 
-    Label(root, text="Payment Details").grid(row=3, column=0)
-    payment_details_entry = Entry(root)
-    payment_details_entry.grid(row=3, column=1)
-
-    Button(root, text="Submit", command=submit_fields).grid(row=4, column=1)
-
-    root.mainloop()
-
-get_form_data()
+    # Save email attachments
+    download_folder = '/path/to/download/folder'
+    client.save_email_attachments(email_id, download_folder)
