@@ -1,135 +1,77 @@
-import imaplib
-import email
-from email.header import decode_header
+import cv2
+import imghdr
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.optimizers import Adam
+from PIL import Image
+import pytesseract
 import os
-import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+def detect_licence_number(image_path):
+    # Check if the image file format is supported
+    if imghdr.what(image_path) not in ['jpeg', 'jpg', 'png', 'bmp']:
+        raise ValueError("Unsupported image file format")
 
-class GmailClient:
-    def __init__(self, username, password, imap_server='imap.gmail.com'):
-        self.username = username
-        self.password = password
-        self.imap_server = imap_server
-        self.mail = None
+    try:
+        # Load the image and convert it to grayscale
+        image = cv2.imread(image_path)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    def connect_to_gmail(self):
-        try:
-            self.mail = imaplib.IMAP4_SSL(self.imap_server)
-            self.mail.login(self.username, self.password)
-            logger.info('Connected to Gmail')
-        except imaplib.IMAP4.error as e:
-            logger.error(f'Login failed: {e}')
-            raise Exception('Login failed')
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    def get_email_body(self, email_id):
-        try:
-            _, msg = self.mail.fetch(email_id, '(RFC822)')
-            raw_message = msg[0][1]
-            message = email.message_from_bytes(raw_message)
-            for part in message.walk():
-                if part.get_content_type() == 'text/plain':
-                    body = part.get_payload(decode=True).decode('utf-8')
-                    return body
-        except Exception as e:
-            logger.error(f'Failed to retrieve email body: {e}')
-            raise Exception('Failed to retrieve email body')
+        # Detect edges using Canny edge detection
+        edged = cv2.Canny(blurred, 30, 150)
 
-    def get_all_emails_from_user(self, sender):
-        try:
-            self.mail.select('inbox')
-            _, search_data = self.mail.search(None, f'FROM "{sender}"')
-            email_ids = search_data[0].split()
-            return email_ids
-        except Exception as e:
-            logger.error(f'Failed to retrieve emails from {sender}: {e}')
-            raise Exception('Failed to retrieve emails')
+        # Find contours in the edged image
+        contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    def get_all_emails_under_label(self, label):
-        try:
-            self.mail.select(label)
-            _, search_data = self.mail.search(None, 'ALL')
-            email_ids = search_data[0].split()
-            return email_ids
-        except Exception as e:
-            logger.error(f'Failed to retrieve emails under {label}: {e}')
-            raise Exception('Failed to retrieve emails')
+        # Initialize the list of license plate contours
+        license_plate_contours = []
 
-    def fetch_unread_emails(self):
-        try:
-            self.mail.select('inbox')
-            _, search_data = self.mail.search(None, 'UNSEEN')
-            email_ids = search_data[0].split()
-            return email_ids
-        except Exception as e:
-            logger.error(f'Failed to retrieve unread emails: {e}')
-            raise Exception('Failed to retrieve unread emails')
+        # Iterate through the contours
+        for contour in contours:
+            # Compute the bounding rectangle and aspect ratio
+            (x, y, w, h) = cv2.boundingRect(contour)
+            aspect_ratio = float(w) / h
 
-    def mark_email_as_read(self, email_id):
-        try:
-            self.mail.store(email_id, '+FLAGS', '\Seen')
-            logger.info(f'Marked email {email_id} as read')
-        except Exception as e:
-            logger.error(f'Failed to mark email {email_id} as read: {e}')
-            raise Exception('Failed to mark email as read')
+            # Check if the contour has a rectangular shape with an aspect ratio similar to a license plate
+            if 3 < aspect_ratio < 6 and 1000 < cv2.contourArea(contour) < 5000:
+                license_plate_contours.append((x, y, w, h))
 
-    def delete_email(self, email_id):
-        try:
-            self.mail.store(email_id, '+FLAGS', '\Deleted')
-            self.mail.expunge()
-            logger.info(f'Deleted email {email_id}')
-        except Exception as e:
-            logger.error(f'Failed to delete email {email_id}: {e}')
-            raise Exception('Failed to delete email')
+        # Initialize the list of license plate numbers
+        license_plate_numbers = []
 
-    def save_email_attachments(self, email_id, download_folder):
-        try:
-            _, msg = self.mail.fetch(email_id, '(RFC822)')
-            raw_message = msg[0][1]
-            message = email.message_from_bytes(raw_message)
-            for part in message.walk():
-                if part.get_content_maintype() == 'multipart':
-                    continue
-                if part.get('Content-Disposition') is None:
-                    continue
-                filename = part.get_filename()
-                if filename:
-                    with open(os.path.join(download_folder, filename), 'wb') as f:
-                        f.write(part.get_payload(decode=True))
-                    logger.info(f'Saved attachment {filename} to {download_folder}')
-        except Exception as e:
-            logger.error(f'Failed to save attachments for email {email_id}: {e}')
-            raise Exception('Failed to save attachments')
+        # Iterate through the license plate contours
+        for (x, y, w, h) in license_plate_contours:
+            # Crop the license plate region from the original image
+            license_plate = image[y:y + h, x:x + w]
+
+            # Convert the license plate image to grayscale and apply thresholding
+            gray_license_plate = cv2.cvtColor(license_plate, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray_license_plate, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+            # Use TensorFlow OCR model to recognize the characters
+            # For simplicity, we will use the Tesseract-OCR engine with the TensorFlow backend
+            # You can replace this with a custom-trained TensorFlow model if needed
+            try:
+                license_plate_number = pytesseract.image_to_string(thresh, lang='eng', config='--psm 11')
+                license_plate_numbers.append(license_plate_number.strip())
+            except Exception as e:
+                raise Exception("Failed to recognize characters: " + str(e))
+
+        # Return the detected license plate numbers
+        if license_plate_numbers:
+            print("Detected license plate number:", license_plate_numbers[0])
+            return license_plate_numbers[0]
+        else:
+            raise Exception("No license plate numbers detected")
+
+    except Exception as e:
+        raise Exception("Error processing image: " + str(e))
 
 # Example usage
-if __name__ == '__main__':
-    username = 'your_email@gmail.com'
-    password = 'your_password'
-    client = GmailClient(username, password)
-    client.connect_to_gmail()
-
-    # Get email body
-    email_id = client.fetch_unread_emails()[0]
-    print(client.get_email_body(email_id))
-
-    # Get all emails from a user
-    sender = 'sender@example.com'
-    email_ids = client.get_all_emails_from_user(sender)
-    print(email_ids)
-
-    # Get all emails under a label
-    label = 'label_name'
-    email_ids = client.get_all_emails_under_label(label)
-    print(email_ids)
-
-    # Mark an email as read
-    client.mark_email_as_read(email_id)
-
-    # Delete an email
-    client.delete_email(email_id)
-
-    # Save email attachments
-    download_folder = '/path/to/download/folder'
-    client.save_email_attachments(email_id, download_folder)
+image_path = "path_to_your_image.jpg"
+detect_licence_number(image_path)
