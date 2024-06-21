@@ -68,7 +68,6 @@ def detect_licence_number(image_path):
             return license_plate_numbers[0]
         else:
             raise Exception("No license plate numbers detected")
-
     except Exception as e:
         raise Exception("Error processing image: " + str(e))
 
