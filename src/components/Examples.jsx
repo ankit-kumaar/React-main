@@ -13,12 +13,13 @@ export default function Examples(){
   //  console.log(selectedTopic)ytf;
 }
     return (
-        <Section id="examples">
-          <Tabs></Tabs>
-          <h2>Examples</h2>
-          <menu>
-           <TabButton isSelected={selectedTopic === 'components'}
+        <Section title="Examples" id="examples">
+          <Tabs 
+          buttons={
+          <>
+            <TabButton isSelected={selectedTopic === 'components'}
             onClick={() => handleSelect('components')}>
+            
             Components
             </TabButton>
            <TabButton 
@@ -30,7 +31,11 @@ export default function Examples(){
            <TabButton 
             isSelected ={selectedTopic === 'state'}
             onClick={() => handleSelect('state')}>State</TabButton>
-          </menu>
+          </>
+    }
+    >
+          {/* {tabContent} */}
+          </Tabs>
           { !selectedTopic && <p>Please select a topic.</p>}
           {selectedTopic && (
           <div id="tab-content">            
